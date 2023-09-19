@@ -6,6 +6,9 @@ _pycache__/
 .cache/
 .idea/
 
+# model
+pretrained_models/
+
 # Python egg metadata, regenerated from source files by setuptools.
 /*.egg-info
 .eggs/
