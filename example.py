@@ -15,6 +15,8 @@ data  = torch.cat([
     torch.randn(3000, 1) * 0.03 + 0.1,
     torch.randn(4000, 1) * 0.01 - 0.4,
 ])
+
+fig1, ax1 = plt.subplots()
 plt.hist(data.numpy(), bins=100)
 plt.title("Ground Truth Data distribution")
 # plt.show()
@@ -125,3 +127,26 @@ def deterministic_sampling(xT: torch.Tensor, n_steps: int):
         trajectory.append(xi)
         
     return xi, (t_steps, trajectory)
+
+# Visualize Probability Flow ODE dx/dt = -t * score_function(x, t)
+n_plot_trajs = 100
+fig2, ax2 = plt.subplots()
+x = torch.linspace(-T - 0.5, T + 0.5, n_plot_trajs).unsqueeze(-1)
+
+_, (t_steps, trajectory) = deterministic_sampling(x, 100)
+
+trajectory = torch.cat(trajectory, dim=1).numpy()
+for i in range(n_plot_trajs):
+    ax2.plot(t_steps, trajectory[i, :], color="blue", alpha=0.3, linewidth=1)
+ax2.set_title("Visualiztion of Probability Flow ODE")
+plt.show()
+plt.savefig("./assert/Probability_Flow_ODE.png")
+
+# Visualize the generated distribution
+n_samples = 10000
+xT = torch.randn(n_samples, 1) * T
+x, _ = deterministic_sampling(xT, 10)   # When sampling, we generally use a smaller number of steps
+plt.hist(x.numpy()[:, 0], bins=100, density=True)
+plt.title("Generated distribution")
+plt.show()
+plt.savefig("./assert/Generated_Distribution.png")
