@@ -140,13 +140,124 @@ for i in range(n_plot_trajs):
     ax2.plot(t_steps, trajectory[i, :], color="blue", alpha=0.3, linewidth=1)
 ax2.set_title("Visualiztion of Probability Flow ODE")
 plt.show()
-plt.savefig("./assert/Probability_Flow_ODE.png")
+# ax2.imshow()
+# plt.savefig("./assert/Probability_Flow_ODE.png")
 
 # Visualize the generated distribution
 n_samples = 10000
 xT = torch.randn(n_samples, 1) * T
 x, _ = deterministic_sampling(xT, 10)   # When sampling, we generally use a smaller number of steps
 plt.hist(x.numpy()[:, 0], bins=100, density=True)
-plt.title("Generated distribution")
+plt.title("Deterministic Sampler Generated distribution")
 plt.show()
-plt.savefig("./assert/Generated_Distribution.png")
+# plt.savefig("./assert/Deterministic_Sampler_Generated_Distribution.png")
+
+# Consistency Distillation
+cd = ConsistencyFunction()
+cd_optimizer = torch.optim.Adam(cd.parameters(), lr=1e-3)
+
+N_EPOCHS = 200  # Number of epochs
+
+cd_ema = deepcopy(cd)
+params_ema = cd_ema.state_dict()
+
+n_steps = 10
+
+with trange(N_EPOCHS) as pbar:
+    for epoch in range(N_EPOCHS):
+        tot_loss = 0.0
+        t_steps = [(EPSILON ** (1 / 7) + (j / (n_steps - 1)) * (T ** (1 / 7) - EPSILON ** (1 / 7))) ** 7 for j in range(0, n_steps)]
+
+        for x, in dataloader:
+            batch_size = x.shape[0]
+            
+            # Sample x_{t_{n+1}}
+            n_1 = [random.randint(1, n_steps - 1) for _ in range(batch_size)]
+            tn_1 = torch.tensor([t_steps[i] for i in n_1])
+            x_tn_1 = x + tn_1.unsqueeze(-1) * torch.randn(batch_size, 1)
+            
+            # Estimate x_{t_n} by Heun's method
+            tn = torch.tensor([t_steps[i - 1] for i in n_1])
+            with torch.no_grad():
+                d =  -tn_1.unsqueeze(-1) * score_function(denoiser, x_tn_1, tn_1)
+                x_tn = x_tn_1 + (tn - tn_1).unsqueeze(-1) * d
+                d_ = -tn.unsqueeze(-1) * score_function(denoiser, x_tn, tn)
+                x_tn = x_tn_1 + (tn - tn_1).unsqueeze(-1) / 2 * (d + d_)
+                
+            # Compute loss and update consistency function
+            with torch.no_grad():
+                out_tn = cd_ema(x_tn, tn)     
+            loss = F.mse_loss(cd(x_tn_1, tn_1), out_tn)
+            
+            loss.backward()
+            cd_optimizer.step()
+            cd_optimizer.zero_grad()
+
+            params_ema = {k: 0.98 * params_ema[k] + 0.02 * v for k, v in cd.state_dict().items()}
+            cd_ema.load_state_dict(params_ema)
+            
+            tot_loss += loss.item()
+        pbar.set_postfix(loss=tot_loss / len(dataloader))
+        pbar.update()
+
+# Visualize the generated distribution of consistency_distillation
+n_samples = 10000
+xT = torch.randn(n_samples, 1) * T
+with torch.no_grad():
+    x = cd(xT, torch.ones(n_samples) * T)
+plt.hist(x.numpy()[:, 0], bins=100, density=True)
+plt.title("Generated distribution of Consistency Distillation")
+plt.savefig("./assert/Consistency_Distillation_Distribution.png")
+
+# Consistency Training
+ct = ConsistencyFunction()
+ct_optimizer = torch.optim.Adam(ct.parameters(), lr=1e-3)
+
+N_EPOCHS = 400  # Number of epochs
+
+ct_ema = deepcopy(ct)
+params_ema = ct_ema.state_dict()
+
+with trange(N_EPOCHS) as pbar:
+    for epoch in range(N_EPOCHS):
+        tot_loss = 0.0
+        n_steps = int(10 + 100 * epoch / N_EPOCHS)
+        t_steps = [(EPSILON ** (1 / 7) + (j / (n_steps - 1)) * (T ** (1 / 7) - EPSILON ** (1 / 7))) ** 7 for j in range(0, n_steps)]
+    
+        for x, in dataloader:
+            batch_size = x.shape[0]
+            
+            # Sample x_{t_{n+1}} = x + t_{n+1} * z, x_{t_n} = x_{t_{n+1}} + (t_n - t_{n+1}) * z = x + t_n * z
+            n_1 = [random.randint(1, n_steps - 1) for _ in range(batch_size)]
+            tn_1 = torch.tensor([t_steps[i] for i in n_1])
+            tn = torch.tensor([t_steps[i - 1] for i in n_1])
+
+            z = torch.randn(batch_size, 1)
+            x_tn_1 = x + tn_1.unsqueeze(-1) * z
+            x_tn = x + tn.unsqueeze(-1) * z
+                
+            # Compute loss and update consistency function
+            with torch.no_grad():
+                out_tn = ct_ema(x_tn, tn)     
+                    
+            loss = F.mse_loss(ct(x_tn_1, tn_1), out_tn)
+            
+            loss.backward()
+            ct_optimizer.step()
+            ct_optimizer.zero_grad()
+
+            params_ema = {k: 0.98 * params_ema[k] + 0.02 * v for k, v in ct.state_dict().items()}
+            ct_ema.load_state_dict(params_ema)
+
+            tot_loss += loss.item()
+        pbar.set_postfix(loss=tot_loss / len(dataloader))
+        pbar.update()
+
+# Visualize the generated distribution of consistency_training
+n_samples = 10000
+xT = torch.randn(n_samples, 1) * T
+with torch.no_grad():
+    x = ct(xT, torch.ones(n_samples) * T)
+plt.hist(x.numpy()[:, 0], bins=100, density=True)
+plt.title("Generated distribution of Consistency Training")
+plt.savefig("./assert/Consistency_Training_Generated_Distribution.png")
